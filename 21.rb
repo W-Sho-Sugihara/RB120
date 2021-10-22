@@ -1,65 +1,17 @@
-require 'pry'
-
-class Participant
-  attr_accessor :hand, :score
-
-  def initialize
-    @hand = []
-    @score = 0
-  end
-
+module Hand
+  # rubocop:disable Metrics/AbcSize
   def show_player_hand
     puts <<~CRD
       #{'+-------+' * hand.size}
-      #{hand.map.with_index { |(k, v), i| ('| ' + hand[i].suit + '     |') }.join}
+      #{hand.map.with_index { |_, i| ('| ' + hand[i].suit + '     |') }.join}
       #{'|       |' * hand.size}
-      #{hand.map.with_index { |(k, v), i| ('| ' + hand[i].value.center(5) + ' |')}.join}
+      #{hand.map.with_index { |_, i| ('| ' + hand[i].value.center(5) + ' |') }.join}
       #{'|       |' * hand.size}
-      #{hand.map.with_index { |(k, v), i| ('|     ' + hand[i].suit + ' |') }.join}
+      #{hand.map.with_index { |_, i| ('|     ' + hand[i].suit + ' |') }.join}
       #{'+-------+' * hand.size}
     CRD
   end
-  
-  def stay?
-    choice = nil
-    loop do
-      puts "Would you like to hit or stay? (h/s)"
-      choice = gets.chomp.downcase
-      break if %w(h s).include?(choice)
-      puts "Not a valide choice."
-    end
-    choice == 's'
-  end
 
-  def busted?
-    total > 21
-  end
-
-  def total
-    values = hand.flat_map(&:value)
-    total = values.reduce(0) do |sum, val|
-      case 
-      when val.to_i > 0 then val = val.to_i
-      when val == "Ace" then val = 11
-      else              val = 10
-      end
-      sum + val
-    end
-    aces = values.count("Ace")
-    while  aces > 0 && total > 21
-      total -= 10
-      aces -= 1
-    end
-    total
-  end
-
-  def empty_hand
-    self.hand = [] 
-  end
-end
-
-class Dealer < Participant
-  
   def show_dealer_hand
     puts <<~CRD
       #{'+-----' * (@hand.size - 1)}+-------+
@@ -71,14 +23,58 @@ class Dealer < Participant
       #{'+-----' * (@hand.size - 1)}+-------+
     CRD
   end
+  # rubocop:enable Metrics/AbcSize
+
+  def busted?
+    total > 21
+  end
+
+  def total
+    values = hand.map(&:to_value)
+    total = values.sum
+    aces = values.count("Ace")
+    while  aces > 0 && total > 21
+      total -= 10
+      aces -= 1
+    end
+    total
+  end
+
+  def empty_hand
+    self.hand = []
+  end
+end
+
+class Participant
+  include Hand
+  attr_accessor :score, :hand
+
+  def initialize
+    @hand = []
+    @score = 0
+  end
+
   def stay?
-    self.total >= 17 
+    choice = nil
+    loop do
+      puts "Would you like to hit or stay? (h/s)"
+      choice = gets.chomp.downcase
+      break if %w(h s).include?(choice)
+      puts "Not a valide choice."
+    end
+    choice == 's'
+  end
+end
+
+class Dealer < Participant
+  def stay?
+    total >= 17
   end
 end
 
 class Deck
   attr_accessor :deck, :discard
-  
+
   def initialize
     @deck = []
     @discard = []
@@ -86,9 +82,8 @@ class Deck
   end
 
   def init_deck
-    init_array = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace']
-    %w(♥︎ ♦︎ ♠︎ ♣︎).each do |suit|
-      init_array.each do |value|
+    Card::SUITS.each do |suit|
+      Card::VALUES.each do |value|
         @deck << Card.new(suit, value)
       end
     end
@@ -96,13 +91,12 @@ class Deck
   end
 
   def reshuffle_if_low
-    if deck.size < 4
-      deck.concat(discard).shuffle!
-      @discard = []
-    end
+    return if deck.size >= 4
+    deck.concat(discard.shuffle)
+    @discard = []
   end
 
-  def deal
+  def deal_one
     reshuffle_if_low
     @deck.shift
   end
@@ -113,6 +107,10 @@ class Deck
 end
 
 class Card
+  SUITS = %w(♥︎ ♦︎ ♠︎ ♣︎)
+  VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10'] +
+           ['Jack', 'Queen', 'King', 'Ace']
+
   attr_reader :suit, :value
 
   def initialize(suit, value)
@@ -121,10 +119,12 @@ class Card
   end
 
   def to_value
-    case 
-    when value.to_i > 0 then value.to_i
-    when value == "Ace" then 11
-    else                10
+    if value.to_i > 0
+      value.to_i
+    elsif value == "Ace"
+      11
+    else
+      10
     end
   end
 end
@@ -141,18 +141,20 @@ class Game
   def start
     welcome_message
     loop do
-      deal_cards
-      display_table
-      player_turn
-      binding.pry
-      display_open_hands
-      dealer_turn
-      show_results
-      discard_and_empty_hands
+      one_round
       break unless play_again?
     end
-   
     goodbye_message
+  end
+
+  def one_round
+    deal_cards
+    display_table
+    player_turn
+    display_open_hands
+    dealer_turn
+    show_results
+    discard_and_empty_hands
   end
 
   def clear_screen
@@ -164,8 +166,8 @@ class Game
   end
 
   def deal_cards
-    player.hand << deck.deal << deck.deal
-    dealer.hand << deck.deal << deck.deal
+    player.hand << deck.deal_one << deck.deal_one
+    dealer.hand << deck.deal_one << deck.deal_one
   end
 
   def display_table
@@ -198,7 +200,7 @@ class Game
 
   def player_turn
     until player.busted? || player.stay?
-      player.hand << deck.deal
+      player.hand << deck.deal_one
       display_table
     end
   end
@@ -206,19 +208,31 @@ class Game
   def dealer_turn
     return if player.busted?
     until dealer.stay?
-      dealer.hand << deck.deal
+      dealer.hand << deck.deal_one
       display_open_hands
     end
   end
 
   def show_results
+    if player.busted? || dealer.busted?
+      show_busted
+    else
+      if_no_bust
+    end
+  end
+
+  def show_busted
     if player.busted?
       puts "You busted! Dealer wins!"
       dealer.score += 1
     elsif dealer.busted?
       puts "The dealer busted! You win!"
       player.score += 1
-    elsif player.total > dealer.total
+    end
+  end
+
+  def if_no_bust
+    if player.total > dealer.total
       puts "You win!"
       player.score += 1
     elsif dealer.total > player.total
@@ -250,7 +264,6 @@ class Game
   def goodbye_message
     puts "Thank you for playing! Bye!"
   end
-
 end
 
 Game.new.start
